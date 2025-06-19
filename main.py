@@ -74,6 +74,7 @@ class SCPIApp:
         self.oscillo = None
         self.gen = None
         self.mode = tk.StringVar(value="both")  # both, oscillo, gen
+        self.debug = tk.BooleanVar(value=False)
         self.load_ips()
         self.build_mode_selector()
         self.build_gui()
@@ -117,22 +118,26 @@ class SCPIApp:
             tk.Button(frm, text="Configurer canal générateur", command=self.config_gen).grid(row=row, column=0, columnspan=2, sticky="ew")
             row += 1
         tk.Button(frm, text="Commande SCPI personnalisée", command=self.scpi_custom).grid(row=row, column=0, columnspan=2, sticky="ew")
+        row += 1
+        tk.Checkbutton(frm, text="Mode debug (afficher les échanges)", variable=self.debug).grid(row=row, column=0, columnspan=2, sticky="w")
+        row += 1
 
     def acquire_and_plot(self):
         if not self.oscillo:
             messagebox.showwarning("Non connecté", "Connectez d'abord l'oscilloscope.")
             return
         try:
-            # Demander le canal à l'utilisateur
             ch = simpledialog.askstring("Canal", "Numéro de canal à acquérir (ex: 1) :", parent=self.root) or "1"
-            # Configurer le format ASCII et le canal
-            self.oscillo.send(":WAV:FORM ASCii")
-            self.oscillo.send(f":WAV:SOUR CHAN{ch}")
-            # Demander le nombre de points (ex: 1000 pour rapidité)
-            self.oscillo.send(":WAV:POIN:MODE RAW")
-            self.oscillo.send(":WAV:POIN 1000")
-            # Envoyer la requête et lire toute la réponse
-            self.oscillo.send(":WAV:DATA?")
+            debug_log = ""
+            def dbg(msg):
+                nonlocal debug_log
+                if self.debug.get():
+                    debug_log += msg + "\n"
+            self.oscillo.send(":WAV:FORM ASCii"); dbg(":WAV:FORM ASCii envoyé")
+            self.oscillo.send(f":WAV:SOUR CHAN{ch}"); dbg(f":WAV:SOUR CHAN{ch} envoyé")
+            self.oscillo.send(":WAV:POIN:MODE RAW"); dbg(":WAV:POIN:MODE RAW envoyé")
+            self.oscillo.send(":WAV:POIN 1000"); dbg(":WAV:POIN 1000 envoyé")
+            self.oscillo.send(":WAV:DATA?"); dbg(":WAV:DATA? envoyé")
             data = b""
             while True:
                 part = self.oscillo.sock.recv(4096)
@@ -140,14 +145,13 @@ class SCPIApp:
                 if len(part) < 4096:
                     break
             data_str = data.decode(errors="ignore")
-            # Nettoyer la réponse (enlever entête, etc.)
+            dbg(f"Réponse brute :\n{data_str[:500]}{'... (tronqué)' if len(data_str)>500 else ''}")
             if "\n" in data_str:
                 data_str = data_str.split("\n",1)[-1]
             y = [float(val) for val in data_str.replace("\n","").split(",") if val.strip()]
             if not y:
-                messagebox.showerror("Erreur acquisition", "Aucune donnée reçue.")
+                messagebox.showerror("Erreur acquisition", "Aucune donnée reçue." + ("\n\n"+debug_log if self.debug.get() else ""))
                 return
-            # Normalisation pour affichage Canvas
             width, height = 800, 300
             min_y, max_y = min(y), max(y)
             scale = (height-20) / (max_y - min_y) if max_y != min_y else 1
@@ -156,13 +160,16 @@ class SCPIApp:
                 x = int(i * width / (len(y)-1))
                 y_canvas = height - 10 - int((v - min_y) * scale)
                 points.append((x, y_canvas))
-            # Création fenêtre et Canvas
             win = tk.Toplevel(self.root)
             win.title(f"Courbe CH{ch} (RTB2004)")
             canvas = tk.Canvas(win, width=width, height=height, bg="white")
             canvas.pack()
             for i in range(1, len(points)):
                 canvas.create_line(points[i-1][0], points[i-1][1], points[i][0], points[i][1], fill="blue")
+            if self.debug.get():
+                txt = tk.Text(win, height=12, width=100)
+                txt.insert("1.0", debug_log)
+                txt.pack()
         except Exception as e:
             messagebox.showerror("Erreur acquisition", str(e))
 
