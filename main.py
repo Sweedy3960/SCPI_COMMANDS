@@ -7,6 +7,8 @@ import socket
 import sys
 import tkinter as tk
 from tkinter import simpledialog, messagebox
+import json
+import os
 
 # Classe de base pour les instruments SCPI
 class SCPIInstrument:
@@ -72,6 +74,7 @@ class SCPIApp:
         self.oscillo = None
         self.gen = None
         self.mode = tk.StringVar(value="both")  # both, oscillo, gen
+        self.load_ips()
         self.build_mode_selector()
         self.build_gui()
 
@@ -88,20 +91,74 @@ class SCPIApp:
     def build_gui(self):
         frm = tk.Frame(self.root)
         frm.pack(padx=10, pady=10)
+        row = 0
         if self.mode.get() in ("both", "oscillo"):
-            tk.Label(frm, text="IP Oscilloscope:").grid(row=0, column=0)
-            tk.Entry(frm, textvariable=self.oscillo_ip).grid(row=0, column=1)
+            tk.Label(frm, text="IP Oscilloscope:").grid(row=row, column=0)
+            tk.Entry(frm, textvariable=self.oscillo_ip).grid(row=row, column=1)
+            row += 1
         if self.mode.get() in ("both", "gen"):
-            tk.Label(frm, text="IP Générateur:").grid(row=1, column=0)
-            tk.Entry(frm, textvariable=self.gen_ip).grid(row=1, column=1)
-        tk.Button(frm, text="Connecter", command=self.connect).grid(row=2, column=0, columnspan=2, pady=5)
+            tk.Label(frm, text="IP Générateur:").grid(row=row, column=0)
+            tk.Entry(frm, textvariable=self.gen_ip).grid(row=row, column=1)
+            row += 1
+        tk.Button(frm, text="Connecter", command=self.connect).grid(row=row, column=0, columnspan=2, pady=5)
+        row += 1
+        tk.Button(frm, text="Sauvegarder les adresses", command=self.save_ips).grid(row=row, column=0, columnspan=2, pady=2)
+        row += 1
         if self.mode.get() in ("both", "oscillo"):
-            tk.Button(frm, text="Identifier Oscillo", command=lambda:self.identify(instr="oscillo")).grid(row=3, column=0, columnspan=2, sticky="ew")
-            tk.Button(frm, text="Configurer canal oscillo", command=self.config_oscillo).grid(row=4, column=0, columnspan=2, sticky="ew")
+            tk.Button(frm, text="Identifier Oscillo", command=lambda:self.identify(instr="oscillo")).grid(row=row, column=0, columnspan=2, sticky="ew")
+            row += 1
+            tk.Button(frm, text="Configurer canal oscillo", command=self.config_oscillo).grid(row=row, column=0, columnspan=2, sticky="ew")
+            row += 1
+            tk.Button(frm, text="Acquérir et afficher la courbe", command=self.acquire_and_plot).grid(row=row, column=0, columnspan=2, sticky="ew")
+            row += 1
         if self.mode.get() in ("both", "gen"):
-            tk.Button(frm, text="Identifier Générateur", command=lambda:self.identify(instr="gen")).grid(row=5, column=0, columnspan=2, sticky="ew")
-            tk.Button(frm, text="Configurer canal générateur", command=self.config_gen).grid(row=6, column=0, columnspan=2, sticky="ew")
-        tk.Button(frm, text="Commande SCPI personnalisée", command=self.scpi_custom).grid(row=7, column=0, columnspan=2, sticky="ew")
+            tk.Button(frm, text="Identifier Générateur", command=lambda:self.identify(instr="gen")).grid(row=row, column=0, columnspan=2, sticky="ew")
+            row += 1
+            tk.Button(frm, text="Configurer canal générateur", command=self.config_gen).grid(row=row, column=0, columnspan=2, sticky="ew")
+            row += 1
+        tk.Button(frm, text="Commande SCPI personnalisée", command=self.scpi_custom).grid(row=row, column=0, columnspan=2, sticky="ew")
+
+    def acquire_and_plot(self):
+        if not self.oscillo:
+            messagebox.showwarning("Non connecté", "Connectez d'abord l'oscilloscope.")
+            return
+        try:
+            # Configuration typique pour RTB2004 (ASCII, canal 1)
+            self.oscillo.send(":WAV:FORM ASCii")
+            self.oscillo.send(":WAV:SOUR CHAN1")
+            data = self.oscillo.query(":WAV:DATA?")
+            # Les données sont séparées par des virgules
+            y = [float(val) for val in data.split(",") if val.strip()]
+            if not y:
+                messagebox.showerror("Erreur acquisition", "Aucune donnée reçue.")
+                return
+            # Normalisation pour affichage Canvas
+            width, height = 800, 300
+            min_y, max_y = min(y), max(y)
+            scale = (height-20) / (max_y - min_y) if max_y != min_y else 1
+            points = []
+            for i, v in enumerate(y):
+                x = int(i * width / (len(y)-1))
+                y_canvas = height - 10 - int((v - min_y) * scale)
+                points.append((x, y_canvas))
+            # Création fenêtre et Canvas
+            win = tk.Toplevel(self.root)
+            win.title("Courbe acquise (Canvas)")
+            canvas = tk.Canvas(win, width=width, height=height, bg="white")
+            canvas.pack()
+            for i in range(1, len(points)):
+                canvas.create_line(points[i-1][0], points[i-1][1], points[i][0], points[i][1], fill="blue")
+        except Exception as e:
+            messagebox.showerror("Erreur acquisition", str(e))
+
+    def save_ips(self):
+        data = {"oscillo_ip": self.oscillo_ip.get(), "gen_ip": self.gen_ip.get(), "mode": self.mode.get()}
+        try:
+            with open("scpi_ips.json", "w") as f:
+                json.dump(data, f)
+            messagebox.showinfo("Sauvegarde", "Adresses IP sauvegardées !")
+        except Exception as e:
+            messagebox.showerror("Erreur sauvegarde", str(e))
 
     def connect(self):
         try:
@@ -181,6 +238,17 @@ class SCPIApp:
             messagebox.showinfo("Réponse", rep)
         except Exception as e:
             messagebox.showerror("Erreur", str(e))
+
+    def load_ips(self):
+        if os.path.exists("scpi_ips.json"):
+            try:
+                with open("scpi_ips.json", "r") as f:
+                    data = json.load(f)
+                self.oscillo_ip.set(data.get("oscillo_ip", "192.168.0.10"))
+                self.gen_ip.set(data.get("gen_ip", "192.168.0.11"))
+                self.mode.set(data.get("mode", "both"))
+            except Exception:
+                pass
 
 # Exemple d’utilisation
 if __name__ == "__main__":
