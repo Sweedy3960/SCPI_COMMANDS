@@ -71,38 +71,68 @@ class SCPIApp:
         self.gen_ip = tk.StringVar(value="192.168.0.11")
         self.oscillo = None
         self.gen = None
+        self.mode = tk.StringVar(value="both")  # both, oscillo, gen
+        self.build_mode_selector()
         self.build_gui()
+
+    def build_mode_selector(self):
+        top = tk.Toplevel(self.root)
+        top.title("Choix du mode de pilotage")
+        tk.Label(top, text="Que voulez-vous piloter ?").pack(padx=10, pady=5)
+        tk.Radiobutton(top, text="Oscilloscope et Générateur", variable=self.mode, value="both").pack(anchor="w", padx=10)
+        tk.Radiobutton(top, text="Oscilloscope seulement", variable=self.mode, value="oscillo").pack(anchor="w", padx=10)
+        tk.Radiobutton(top, text="Générateur seulement", variable=self.mode, value="gen").pack(anchor="w", padx=10)
+        tk.Button(top, text="Valider", command=top.destroy).pack(pady=10)
+        self.root.wait_window(top)
 
     def build_gui(self):
         frm = tk.Frame(self.root)
         frm.pack(padx=10, pady=10)
-        tk.Label(frm, text="IP Oscilloscope:").grid(row=0, column=0)
-        tk.Entry(frm, textvariable=self.oscillo_ip).grid(row=0, column=1)
-        tk.Label(frm, text="IP Générateur:").grid(row=1, column=0)
-        tk.Entry(frm, textvariable=self.gen_ip).grid(row=1, column=1)
+        if self.mode.get() in ("both", "oscillo"):
+            tk.Label(frm, text="IP Oscilloscope:").grid(row=0, column=0)
+            tk.Entry(frm, textvariable=self.oscillo_ip).grid(row=0, column=1)
+        if self.mode.get() in ("both", "gen"):
+            tk.Label(frm, text="IP Générateur:").grid(row=1, column=0)
+            tk.Entry(frm, textvariable=self.gen_ip).grid(row=1, column=1)
         tk.Button(frm, text="Connecter", command=self.connect).grid(row=2, column=0, columnspan=2, pady=5)
-        tk.Button(frm, text="Identifier", command=self.identify).grid(row=3, column=0, columnspan=2, sticky="ew")
-        tk.Button(frm, text="Configurer canal oscillo", command=self.config_oscillo).grid(row=4, column=0, columnspan=2, sticky="ew")
-        tk.Button(frm, text="Configurer canal générateur", command=self.config_gen).grid(row=5, column=0, columnspan=2, sticky="ew")
-        tk.Button(frm, text="Commande SCPI personnalisée", command=self.scpi_custom).grid(row=6, column=0, columnspan=2, sticky="ew")
+        if self.mode.get() in ("both", "oscillo"):
+            tk.Button(frm, text="Identifier Oscillo", command=lambda:self.identify(instr="oscillo")).grid(row=3, column=0, columnspan=2, sticky="ew")
+            tk.Button(frm, text="Configurer canal oscillo", command=self.config_oscillo).grid(row=4, column=0, columnspan=2, sticky="ew")
+        if self.mode.get() in ("both", "gen"):
+            tk.Button(frm, text="Identifier Générateur", command=lambda:self.identify(instr="gen")).grid(row=5, column=0, columnspan=2, sticky="ew")
+            tk.Button(frm, text="Configurer canal générateur", command=self.config_gen).grid(row=6, column=0, columnspan=2, sticky="ew")
+        tk.Button(frm, text="Commande SCPI personnalisée", command=self.scpi_custom).grid(row=7, column=0, columnspan=2, sticky="ew")
 
     def connect(self):
         try:
             if self.oscillo: self.oscillo.close()
             if self.gen: self.gen.close()
-            self.oscillo = SCPIInstrument(self.oscillo_ip.get())
-            self.gen = SCPIInstrument(self.gen_ip.get())
-            self.oscillo.connect()
-            self.gen.connect()
+            if self.mode.get() in ("both", "oscillo"):
+                self.oscillo = SCPIInstrument(self.oscillo_ip.get())
+                self.oscillo.connect()
+            else:
+                self.oscillo = None
+            if self.mode.get() in ("both", "gen"):
+                self.gen = SCPIInstrument(self.gen_ip.get())
+                self.gen.connect()
+            else:
+                self.gen = None
             messagebox.showinfo("Connexion", "Connexion réussie !")
         except Exception as e:
             messagebox.showerror("Erreur connexion", str(e))
 
-    def identify(self):
+    def identify(self, instr=None):
         try:
-            osc_id = self.oscillo.query("*IDN?") if self.oscillo else "Non connecté"
-            gen_id = self.gen.query("*IDN?") if self.gen else "Non connecté"
-            messagebox.showinfo("Identification", f"Oscilloscope: {osc_id}\nGénérateur: {gen_id}")
+            if instr == "oscillo":
+                osc_id = self.oscillo.query("*IDN?") if self.oscillo else "Non connecté"
+                messagebox.showinfo("Identification", f"Oscilloscope: {osc_id}")
+            elif instr == "gen":
+                gen_id = self.gen.query("*IDN?") if self.gen else "Non connecté"
+                messagebox.showinfo("Identification", f"Générateur: {gen_id}")
+            else:
+                osc_id = self.oscillo.query("*IDN?") if self.oscillo else "Non connecté"
+                gen_id = self.gen.query("*IDN?") if self.gen else "Non connecté"
+                messagebox.showinfo("Identification", f"Oscilloscope: {osc_id}\nGénérateur: {gen_id}")
         except Exception as e:
             messagebox.showerror("Erreur", str(e))
 
@@ -137,7 +167,13 @@ class SCPIApp:
             messagebox.showerror("Erreur", str(e))
 
     def scpi_custom(self):
-        cible = simpledialog.askstring("Instrument", "Sur quel instrument ? (oscillo/gen) :")
+        cible = None
+        if self.mode.get() == "both":
+            cible = simpledialog.askstring("Instrument", "Sur quel instrument ? (oscillo/gen) :")
+        elif self.mode.get() == "oscillo":
+            cible = "oscillo"
+        elif self.mode.get() == "gen":
+            cible = "gen"
         instr = self.oscillo if cible and cible.lower().startswith("o") else self.gen
         cmd = simpledialog.askstring("Commande SCPI", "Commande à envoyer :")
         try:
@@ -149,35 +185,64 @@ class SCPIApp:
 # Exemple d’utilisation
 if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "--cli":
-        oscillo_ip = input("Entrer l'adresse IP de l'oscilloscope : ") or "192.168.0.10"
-        gen_ip = input("Entrer l'adresse IP du générateur de fonctions : ") or "192.168.0.11"
-        oscillo = SCPIInstrument(oscillo_ip)
-        gen = SCPIInstrument(gen_ip)
+        print("Que voulez-vous piloter ?")
+        print("1. Oscilloscope et Générateur")
+        print("2. Oscilloscope seulement")
+        print("3. Générateur seulement")
+        mode = input("Choix : ")
+        use_oscillo = mode in ("1", "2")
+        use_gen = mode in ("1", "3")
+        oscillo = gen = None
+        if use_oscillo:
+            oscillo_ip = input("Entrer l'adresse IP de l'oscilloscope : ") or "192.168.0.10"
+            oscillo = SCPIInstrument(oscillo_ip)
+        if use_gen:
+            gen_ip = input("Entrer l'adresse IP du générateur de fonctions : ") or "192.168.0.11"
+            gen = SCPIInstrument(gen_ip)
         try:
-            oscillo.connect()
-            gen.connect()
+            if use_oscillo:
+                oscillo.connect()
+            if use_gen:
+                gen.connect()
             while True:
-                choix = menu()
-                if choix == "1":
+                print("\n--- Contrôle SCPI Instruments ---")
+                if use_oscillo:
+                    print("1. Identifier l'oscilloscope")
+                    print("2. Configurer un canal oscilloscope")
+                if use_gen:
+                    print("3. Identifier le générateur")
+                    print("4. Configurer un canal générateur")
+                print("5. Envoyer une commande SCPI personnalisée")
+                print("6. Modifier l'adresse IP d'un instrument")
+                print("0. Quitter")
+                choix = input("Choix : ")
+                if choix == "1" and use_oscillo:
                     print("Oscilloscope ID:", oscillo.query("*IDN?"))
-                    print("Générateur ID:", gen.query("*IDN?"))
-                elif choix == "2":
+                elif choix == "2" and use_oscillo:
                     config_oscilloscope(oscillo)
-                elif choix == "3":
+                elif choix == "3" and use_gen:
+                    print("Générateur ID:", gen.query("*IDN?"))
+                elif choix == "4" and use_gen:
                     config_generateur(gen)
-                elif choix == "4":
-                    cible = input("Sur quel instrument ? (oscillo/gen) : ")
-                    instr = oscillo if cible.lower().startswith("o") else gen
-                    scpi_custom(instr)
                 elif choix == "5":
+                    cible = None
+                    if use_oscillo and use_gen:
+                        cible = input("Sur quel instrument ? (oscillo/gen) : ")
+                    elif use_oscillo:
+                        cible = "oscillo"
+                    elif use_gen:
+                        cible = "gen"
+                    instr = oscillo if cible and cible.lower().startswith("o") else gen
+                    scpi_custom(instr)
+                elif choix == "6":
                     cible = input("Quel instrument ? (oscillo/gen) : ")
                     new_ip = input("Nouvelle adresse IP : ")
-                    if cible.lower().startswith("o"):
+                    if cible.lower().startswith("o") and use_oscillo:
                         oscillo.close()
                         oscillo = SCPIInstrument(new_ip)
                         oscillo.connect()
                         print("IP oscilloscope modifiée.")
-                    else:
+                    elif use_gen:
                         gen.close()
                         gen = SCPIInstrument(new_ip)
                         gen.connect()
@@ -190,8 +255,10 @@ if __name__ == "__main__":
         except Exception as e:
             print("Erreur :", e)
         finally:
-            oscillo.close()
-            gen.close()
+            if use_oscillo and oscillo:
+                oscillo.close()
+            if use_gen and gen:
+                gen.close()
     else:
         root = tk.Tk()
         app = SCPIApp(root)
