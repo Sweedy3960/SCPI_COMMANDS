@@ -123,12 +123,27 @@ class SCPIApp:
             messagebox.showwarning("Non connecté", "Connectez d'abord l'oscilloscope.")
             return
         try:
-            # Configuration typique pour RTB2004 (ASCII, canal 1)
+            # Demander le canal à l'utilisateur
+            ch = simpledialog.askstring("Canal", "Numéro de canal à acquérir (ex: 1) :", parent=self.root) or "1"
+            # Configurer le format ASCII et le canal
             self.oscillo.send(":WAV:FORM ASCii")
-            self.oscillo.send(":WAV:SOUR CHAN1")
-            data = self.oscillo.query(":WAV:DATA?")
-            # Les données sont séparées par des virgules
-            y = [float(val) for val in data.split(",") if val.strip()]
+            self.oscillo.send(f":WAV:SOUR CHAN{ch}")
+            # Demander le nombre de points (ex: 1000 pour rapidité)
+            self.oscillo.send(":WAV:POIN:MODE RAW")
+            self.oscillo.send(":WAV:POIN 1000")
+            # Envoyer la requête et lire toute la réponse
+            self.oscillo.send(":WAV:DATA?")
+            data = b""
+            while True:
+                part = self.oscillo.sock.recv(4096)
+                data += part
+                if len(part) < 4096:
+                    break
+            data_str = data.decode(errors="ignore")
+            # Nettoyer la réponse (enlever entête, etc.)
+            if "\n" in data_str:
+                data_str = data_str.split("\n",1)[-1]
+            y = [float(val) for val in data_str.replace("\n","").split(",") if val.strip()]
             if not y:
                 messagebox.showerror("Erreur acquisition", "Aucune donnée reçue.")
                 return
@@ -143,7 +158,7 @@ class SCPIApp:
                 points.append((x, y_canvas))
             # Création fenêtre et Canvas
             win = tk.Toplevel(self.root)
-            win.title("Courbe acquise (Canvas)")
+            win.title(f"Courbe CH{ch} (RTB2004)")
             canvas = tk.Canvas(win, width=width, height=height, bg="white")
             canvas.pack()
             for i in range(1, len(points)):
